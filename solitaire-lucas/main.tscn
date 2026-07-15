@@ -4,3 +4,12 @@
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_ig7tw")
+
+[node name="RestartButton" type="Button" parent="."]
+offset_left = 500.0
+offset_top = 20.0
+offset_right = 565.0
+offset_bottom = 51.0
+text = "Restart"
+
+[connection signal="pressed" from="RestartButton" to="." method="_on_restart_button_pressed"]
