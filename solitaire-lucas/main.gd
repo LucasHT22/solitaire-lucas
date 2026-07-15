@@ -1,14 +1,23 @@
 extends Node2D
 
+enum { SHAPE_ENGLISH, SHAPE_EUROPEAN, SHAPE_FULL }
+const SHAPE_NAMES = ["English Cross (33)", "European Cross (37)", "Full Square (49)"]
+
 const GRID_SIZE: int = 7
 const CELL: int = 60
 const RADIUS: int = 24
 const OFFSET: Vector2 = Vector2(80, 100)
 const JUMP_DURATION: float = 0.25
+const SOLVER_PEG_THRESHOLD: int = 22
+
+@onready var hint_button: Button = $HintButton
+@onready var count_button: Button = $CountButton
+@onready var solve_button: Button = $SolveButton
 
 var board: Array = []
 var selected = null
 var game_over_message: String = ""
+var board_shape: int = SHAPE_ENGLISH
 
 var animating: bool = false
 var anim_from: Vector2i
@@ -21,15 +30,27 @@ var valid_cells: Array = []
 var cell_index: Dictionary = {}
 var solver_moves: Array = []
 var solver_failed_cache: Dictionary = {}
+var solution_count_cache: Dictionary = {}
+
+var hint_move = null
 
 func _ready() -> void:
 	init_board()
 	build_solver_data()
+	update_solver_buttons()
 	queue_redraw()
 
 func _draw() -> void:
 	var font = ThemeDB.fallback_font
 	draw_string(font, Vector2(20, 30), "Pins remaining: %d" % count_pegs(), HORIZONTAL_ALIGNMENT_CENTER, -1, 20)
+	draw_string(font, Vector2(20, 55), "Board: %s" % SHAPE_NAMES[board_shape], HORIZONTAL_ALIGNMENT_CENTER, -1, 14)
+	
+	for c in range(GRID_SIZE):
+		var label = char(65 + c)
+		draw_string(font, OFFSET + Vector2(c * CELL - 5, -20), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.6, 0.6, 0.6))
+	for r in range(GRID_SIZE):
+		var label = str(r + 1)
+		draw_string(font, OFFSET + Vector2(-28, r * CELL + 6), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.6, 0.6, 0.6))
 	
 	for r in range(GRID_SIZE):
 		for c in range(GRID_SIZE):
@@ -52,6 +73,13 @@ func _draw() -> void:
 			var pos = OFFSET + Vector2(dest.x * CELL, dest.y * CELL)
 			draw_arc(pos, RADIUS + 3, 0, TAU, 32, Color(0.3, 0.9, 0.4), 3.0)
 	
+	if hint_move != null:
+		var hf = OFFSET + Vector2(hint_move.from.x * CELL, hint_move.from.y * CELL)
+		var ht = OFFSET + Vector2(hint_move.to.x * CELL, hint_move.to.y * CELL)
+		draw_arc(hf, RADIUS + 5, 0, TAU, 32, Color(0.3, 0.6, 1.0), 3.0)
+		draw_arc(ht, RADIUS + 5, 0, TAU, 32, Color(0.3, 0.6, 1.0), 3.0)
+		draw_line(hf, ht, Color(0.3, 0.6, 1.0, 0.6), 2.0)
+	
 	if animating:
 		var from_pos = OFFSET + Vector2(anim_from.x * CELL, anim_from.y * CELL)
 		var to_pos = OFFSET + Vector2(anim_to.x * CELL, anim_to.y * CELL)
@@ -60,6 +88,9 @@ func _draw() -> void:
 		
 		var mid_pos = OFFSET +Vector2(anim_mid.x * CELL, anim_mid.y * CELL)
 		draw_circle(mid_pos, RADIUS, Color(0.85, 0.65, 0.2, 1.0 - anim_progress))
+	
+	if count_pegs() > SOLVER_PEG_THRESHOLD:
+		draw_string(font, Vector2(20, 75), "Solver unlocks at %d pegs or fewer" % SOLVER_PEG_THRESHOLD, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.8, 0.5, 0.3))
 	
 	if game_over_message != "":
 		draw_string(font, Vector2(20, 600), game_over_message, HORIZONTAL_ALIGNMENT_CENTER, -1, 20)
@@ -80,6 +111,11 @@ func _input(event: InputEvent) -> void:
 					return
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_R:
 		restart_game()
+
+func update_solver_buttons() -> void:
+	var enabled = count_pegs() <= SOLVER_PEG_THRESHOLD
+	hint_button.disabled = not enabled
+	count_button.disabled = not enabled
 
 func try_move(from: Vector2i, to: Vector2i) -> bool:
 	if board[to.y][to.x] != 0:
@@ -109,6 +145,7 @@ func try_move(from: Vector2i, to: Vector2i) -> bool:
 func handle_click(cell: Vector2i) -> void:
 	var c = cell.x
 	var r = cell.y
+	hint_move = null
 	
 	if selected == null:
 		if board[r][c] == 1:
@@ -145,9 +182,19 @@ func init_board() -> void:
 	board[3][3] = 0
 
 func is_valid_cell(r: int, c: int) -> bool:
-	if r < 2 or r > 4:
-		return c >= 2 and c <= 4
-	return true
+	match board_shape:
+		SHAPE_ENGLISH:
+			if r < 2 or r > 4:
+				return c >= 2 and c <= 4
+			return true
+		SHAPE_EUROPEAN:
+			var width_by_row = [3, 5, 7, 7, 7, 5, 3]
+			var w = width_by_row[r]
+			var start = int((GRID_SIZE - w) / 2.0)
+			return c >= start and c < start + w
+		SHAPE_FULL:
+			return true
+	return false
 
 func count_pegs() -> int:
 	var pegs = 0
@@ -202,7 +249,10 @@ func restart_game() -> void:
 	game_over_message = ""
 	animating = false
 	solving = false
+	hint_move = null
 	solver_failed_cache.clear()
+	solution_count_cache.clear()
+	update_solver_buttons()
 	queue_redraw()
  
 func start_jump_animation() -> void:
@@ -218,6 +268,7 @@ func _on_anim_step(t: float) -> void:
 
 func _on_anim_finished() -> void:
 	animating = false
+	update_solver_buttons()
 	queue_redraw()
 	check_game_over()
 
@@ -227,13 +278,28 @@ func _on_restart_button_pressed() -> void:
 func _on_solve_button_pressed() -> void:
 	if animating or solving:
 		return
+	hint_move = null
+	
 	var mask = board_to_bitmask()
+	var pegs = count_pegs()
+	
+	if pegs > SOLVER_PEG_THRESHOLD:
+		game_over_message = "Solving %d pegs - this may take a moment..." % pegs
+		solve_button.disabled = true
+		queue_redraw()
+		await get_tree().process_frame
+		await get_tree().process_frame
+	
 	solver_failed_cache.clear()
 	var solution = solve_from(mask)
+	
+	solve_button.disabled = false
+	
 	if solution == null:
 		game_over_message = "No possible solution."
 		queue_redraw()
 		return
+	
 	game_over_message = ""
 	play_solution(solution)
 
@@ -275,7 +341,7 @@ func count_bits(mask: int) -> int:
 		m >>= 1
 	return count
 
-func solve_from(mask: int):
+func solve_from(mask: int) -> Variant:
 	if count_bits(mask) == 1:
 		return []
 	if solver_failed_cache.has(mask):
@@ -299,6 +365,27 @@ func solve_from(mask: int):
 	solver_failed_cache[mask] = true
 	return null
 
+func count_solutions(mask: int) -> int:
+	if count_bits(mask) == 1:
+		return 1
+	if solution_count_cache.has(mask):
+		return solution_count_cache[mask]
+	
+	var total = 0
+	for move in solver_moves:
+		var from_bit = 1 << move.from
+		var mid_bit = 1 << move.mid
+		var to_bit = 1 << move.to
+		if (mask & from_bit) != 0 and (mask & mid_bit) != 0 and (mask & to_bit) == 0:
+			var new_mask = mask
+			new_mask &= ~from_bit
+			new_mask &= ~mid_bit
+			new_mask |= to_bit
+			total += count_solutions(new_mask)
+	
+	solution_count_cache[mask] = total
+	return total
+
 func play_solution(moves: Array) -> void:
 	solving = true
 	for move in moves:
@@ -315,4 +402,42 @@ func play_solution(moves: Array) -> void:
 	
 	selected = null
 	solving = false
+	queue_redraw()
+
+
+func _on_hint_button_pressed() -> void:
+	if animating or solving:
+		return
+	var mask = board_to_bitmask()
+	solver_failed_cache.clear()
+	var solution = solve_from(mask)
+	if solution == null or solution.size() == 0:
+		game_over_message = "No hint from here."
+		queue_redraw()
+		return
+	var first_move = solution[0]
+	hint_move = {
+		"from": valid_cells[first_move.from],
+		"to": valid_cells[first_move.to]
+	}
+	selected = null
+	queue_redraw()
+
+
+func _on_shape_button_pressed() -> void:
+	if animating or solving:
+		return
+	
+	board_shape = (board_shape + 1) % SHAPE_NAMES.size()
+	build_solver_data()
+	restart_game()
+
+
+func _on_count_button_pressed() -> void:
+	if animating or solving:
+		return
+	var mask = board_to_bitmask()
+	solution_count_cache.clear()
+	var total = count_solutions(mask)
+	game_over_message = "Distinct solutions from here: %d" % total
 	queue_redraw()
