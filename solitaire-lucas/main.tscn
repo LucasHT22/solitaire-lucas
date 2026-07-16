@@ -40,8 +40,16 @@ offset_right = 608.0
 offset_bottom = 148.0
 text = "Count Solutions"
 
+[node name="PagodaButton" type="Button" parent="."]
+offset_left = 600.0
+offset_top = 180.0
+offset_right = 717.0
+offset_bottom = 211.0
+text = "Pagoda Solver"
+
 [connection signal="pressed" from="RestartButton" to="." method="_on_restart_button_pressed"]
 [connection signal="pressed" from="SolveButton" to="." method="_on_solve_button_pressed"]
 [connection signal="pressed" from="HintButton" to="." method="_on_hint_button_pressed"]
 [connection signal="pressed" from="ShapeButton" to="." method="_on_shape_button_pressed"]
 [connection signal="pressed" from="CountButton" to="." method="_on_count_button_pressed"]
+[connection signal="pressed" from="PagodaButton" to="." method="_on_pagoda_button_pressed"]

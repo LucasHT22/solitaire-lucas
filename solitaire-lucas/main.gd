@@ -6,13 +6,16 @@ const SHAPE_NAMES = ["English Cross (33)", "European Cross (37)", "Full Square (
 const GRID_SIZE: int = 7
 const CELL: int = 60
 const RADIUS: int = 24
-const OFFSET: Vector2 = Vector2(80, 100)
+const OFFSET: Vector2 = Vector2(90, 150)
 const JUMP_DURATION: float = 0.25
 const SOLVER_PEG_THRESHOLD: int = 22
+const PHI: float = 1.6180339887498949
+const WIN_TARGET: Vector2i = Vector2i(3, 3)
 
 @onready var hint_button: Button = $HintButton
 @onready var count_button: Button = $CountButton
 @onready var solve_button: Button = $SolveButton
+@onready var pagoda_button: Button = $PagodaButton
 
 var board: Array = []
 var selected = null
@@ -31,6 +34,7 @@ var cell_index: Dictionary = {}
 var solver_moves: Array = []
 var solver_failed_cache: Dictionary = {}
 var solution_count_cache: Dictionary = {}
+var target_bit: int = 0
 
 var hint_move = null
 
@@ -42,15 +46,15 @@ func _ready() -> void:
 
 func _draw() -> void:
 	var font = ThemeDB.fallback_font
-	draw_string(font, Vector2(20, 30), "Pins remaining: %d" % count_pegs(), HORIZONTAL_ALIGNMENT_CENTER, -1, 20)
-	draw_string(font, Vector2(20, 55), "Board: %s" % SHAPE_NAMES[board_shape], HORIZONTAL_ALIGNMENT_CENTER, -1, 14)
+	draw_string(font, Vector2(20, 25), "Pins remaining: %d" % count_pegs(), HORIZONTAL_ALIGNMENT_CENTER, -1, 20)
+	draw_string(font, Vector2(20, 48), "Board: %s" % SHAPE_NAMES[board_shape], HORIZONTAL_ALIGNMENT_CENTER, -1, 14)
 	
 	for c in range(GRID_SIZE):
 		var label = char(65 + c)
-		draw_string(font, OFFSET + Vector2(c * CELL - 5, -20), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.6, 0.6, 0.6))
+		draw_string(font, OFFSET + Vector2(c * CELL - 5, -32), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.6, 0.6, 0.6))
 	for r in range(GRID_SIZE):
 		var label = str(r + 1)
-		draw_string(font, OFFSET + Vector2(-28, r * CELL + 6), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.6, 0.6, 0.6))
+		draw_string(font, OFFSET + Vector2(-39, r * CELL + 6), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.6, 0.6, 0.6))
 	
 	for r in range(GRID_SIZE):
 		for c in range(GRID_SIZE):
@@ -67,6 +71,9 @@ func _draw() -> void:
 				if selected != null and selected == Vector2i(c, r):
 					col = Color(0.95, 0.3, 0.3)
 				draw_circle(pos, RADIUS, col)
+	
+	var target_pos = OFFSET + Vector2(WIN_TARGET.x * CELL, WIN_TARGET.y * CELL)
+	draw_arc(target_pos, RADIUS + 9, 0, TAU, 32, Color(1.0, 1.0, 1.0, 0.25), 1.5)
 	
 	if selected != null and not animating:
 		for dest in valid_destinations(selected):
@@ -90,7 +97,7 @@ func _draw() -> void:
 		draw_circle(mid_pos, RADIUS, Color(0.85, 0.65, 0.2, 1.0 - anim_progress))
 	
 	if count_pegs() > SOLVER_PEG_THRESHOLD:
-		draw_string(font, Vector2(20, 75), "Solver unlocks at %d pegs or fewer" % SOLVER_PEG_THRESHOLD, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.8, 0.5, 0.3))
+		draw_string(font, Vector2(20, 75), "Hint unlocks at %d pegs or fewer" % SOLVER_PEG_THRESHOLD, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.8, 0.5, 0.3))
 	
 	if game_over_message != "":
 		draw_string(font, Vector2(20, 600), game_over_message, HORIZONTAL_ALIGNMENT_CENTER, -1, 20)
@@ -233,15 +240,23 @@ func has_move(r: int, c: int) -> bool:
 
 func check_game_over() -> void:
 	var moves_available = false
+	var pegs = 0
+	var last_pos = null
 	for r in range(GRID_SIZE):
 		for c in range(GRID_SIZE):
-			if board[r][c] == 1 and has_move(r, c):
-				moves_available = true
-	if not moves_available:
-		if count_pegs() == 1:
-			game_over_message = "You win! 1 pin left!"
+			if board[r][c] == 1:
+				pegs += 1
+				last_pos = Vector2i(c, r)
+				if has_move(r, c):
+					moves_available = true
+	if not moves_available :
+		if pegs == 1 and last_pos == WIN_TARGET:
+			game_over_message = "You win! 1 pin left right in the center!"
+		elif pegs == 1:
+			game_over_message = "Game over! 1 peg left, but not in the center. So close!"
 		else:
 			game_over_message = "Game over! Pins remaining: %d" % count_pegs()
+	queue_redraw()
 
 func restart_game() -> void:
 	init_board()
@@ -279,7 +294,12 @@ func _on_solve_button_pressed() -> void:
 	if animating or solving:
 		return
 	hint_move = null
+	if board_shape != SHAPE_ENGLISH:
+		game_over_message = "Solve is only available on the English Cross board."
+		queue_redraw()
+		return
 	
+	hint_move = null
 	var mask = board_to_bitmask()
 	var pegs = count_pegs()
 	
@@ -324,6 +344,7 @@ func build_solver_data() -> void:
 					"mid": cell_index[mid],
 					"to": cell_index[to]
 				})
+	target_bit = 1 << cell_index[WIN_TARGET]
 
 func board_to_bitmask() -> int:
 	var mask = 0
@@ -342,7 +363,7 @@ func count_bits(mask: int) -> int:
 	return count
 
 func solve_from(mask: int) -> Variant:
-	if count_bits(mask) == 1:
+	if mask == target_bit:
 		return []
 	if solver_failed_cache.has(mask):
 		return null
@@ -366,7 +387,7 @@ func solve_from(mask: int) -> Variant:
 	return null
 
 func count_solutions(mask: int) -> int:
-	if count_bits(mask) == 1:
+	if mask == target_bit:
 		return 1
 	if solution_count_cache.has(mask):
 		return solution_count_cache[mask]
@@ -441,3 +462,27 @@ func _on_count_button_pressed() -> void:
 	var total = count_solutions(mask)
 	game_over_message = "Distinct solutions from here: %d" % total
 	queue_redraw()
+
+
+func _on_pagoda_button_pressed() -> void:
+	if animating or solving:
+		return
+	var weight = pagoda_total_weight(WIN_TARGET)
+	if weight < 1.0 - 0.0001:
+		game_over_message = "Pagoda proof: reaching the center is impossible from here (weight %.3f < 1)." % weight
+	else:
+		game_over_message = "Pagoda check incconclusive (weight %.3f) - doesn't rule out a center finish." % weight
+	queue_redraw()
+
+func pagoda_weight(r: int, c: int, target: Vector2i) -> float:
+	var dr = absi(r - target.y)
+	var dc = absi(c - target.x)
+	return pow(1.0 / PHI, dr) * pow(1.0 / PHI, dc)
+
+func pagoda_total_weight(target: Vector2i) -> float:
+	var total = 0.0
+	for r in range(GRID_SIZE):
+		for c in range(GRID_SIZE):
+			if board[r][c] == 1:
+				total += pagoda_weight(r, c, target)
+	return total
