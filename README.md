@@ -93,11 +93,28 @@ The transportation table (`solver_failed_cache`) tames this considerably in prac
 
 ### Why 22 pegs can be instant and 15 pegs can time out
 
+This is the counterintuitive part, fewer pegs does not mean easier search. It means shallower search, which is a different thing.
+
+Every legal move removes exactly one peg, so a position with `k` pegs remaining is always exactly `k - 1` jumps from a single-peg finish, if a finish is reachable at all. That fixes the maximum depth of the search tree. The number of leaves at that depth, in the worst case grows like:
+
 ```
 leaves = b^(k - 1)
 ```
 
+where `b` is the average branching factor (how many legal jumps are available per position, typically somewhere in the 2-8 range on a mid-game board, depending on how clustered the remaining pegs are). This is why depth dominates: going from `k = 22` to `k = 15` cuts seven layers off the tree, which can mean several orders of magnitude fewer leaves, if both searches behave the same way. And that "if" is exactly where the asymmetry from the previous section bites.
+
+ - If the `k = 22` position is solvable, `solve_from` typically finds a path without exploring anywhere near the full tree, it commmits to the first move that leads somewhere, recurses, and returns as soon as one branch succeeds. In the best case this is closer to `O(k · b)` than `O(b^k)`: it's a walk down one path, not an enumeration of all of them, only backtracking when a specific branch dead-ends.
+ - If the `k = 15` position is unsolvable, which can happen if earlier manual play isolated a peg or split the board into disconnected clusters, there is no early exit. The search must expand and rule out every single one of those `~b^14` leaves before `solve_from` can honestly return `null`. Fewer pegs bought you a shallower tree, but a full enumeration of a shallow-but-unsolvable tree can still lose to a shallow walk down one path of a deeper-but-solvable one.
+
+In other words: whether a search is fast is governed far more by whether the position is solvable than by how many pegs are on the board. Peg count sets an upper bound on the work, solvability decides whether the search gets to stop early or has to hit that bound. Bounding depth alone (the peg-count threshold) is not the same as bounding cost, a shallow-but-unsolvable subtree can still be expensive.
+
+A sharper tool sidesteps the enumeration entirely: a pagoda function can sometimes prove a position unsolvable in closed form, no search at all, by exhibiting a weigthing where the position's total already falls short of the target's weight. This repo implements one, see "The pagoda function" section below for the concrete weighting.
+
 ### Why solve is restricted to the England board
+
+One of the first tries of this solver, tried to handle the risk above with a node budget, cap the search effort, and if it ran out, report "inconclusive" instaed of a false negative. That works, but it's a patch over a problem that's better solved upstream: the English Cross is the only shape here with a well-established theory behind it. Its solvability (32 pegs down to 1, center to center) is proven via pagoda functions, independent of any search, it's not a hope, it's a certainty. The European Cross and Full Square have no such guarantee baked into this project, whether a given position on those boards is solvable is genuinely open until searched, and a full 49-cell board is exactly the case from the previous section where an unsolvable position can force to a full `2^49` enumeration.
+
+Rather than let the player hit that well and get an ambiguous "ran out of budget" message, `Solve` simply isn't offered outside the English board:
 
 ```gdscript
 func _on_solve_button_pressed() -> void:
@@ -109,6 +126,8 @@ func _on_solve_button_pressed() -> void:
         return
     ...
 ```
+
+`Hint` and `Count Solutions` don't get this restriction, they're already bounded by the peg-count threshold from the section above, which caps depth regardless of shape. That's a real bound, just a coarser one than "provably tractable": it doesn't rule out an expensive negative result at 15 pegs, but it keeps the worst case survivable on any board shape. `Solve`, left unrestricted, was the one feature exposed to the full, unbounded version of that risk, so it's the one that got a hard shape gate instaed of a soft depth gate.
 
 ### Counting solutions: from search to dynamic programming
 
