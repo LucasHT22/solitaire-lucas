@@ -1,3 +1,9 @@
+![](/assets/image.png)
+
+---
+
+> Note: this project used AI (Claude) for improvement suggestions and quick fixes (like spot a typo.)
+
 # Solitaire Lucas
 
 A classic peg solitaire built from scratch in Godot. Cross board, move highlighting, tween-based jump animation, and a bitboard backtracking solver.
