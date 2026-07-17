@@ -131,6 +131,8 @@ func _on_solve_button_pressed() -> void:
 
 ### Counting solutions: from search to dynamic programming
 
+`solve_from` stops at the first solution it finds. `count_solutions` asks a different, more expensive question: how many distict move sequences reach a single peg from here? The recursion is nearly identical, but the base case sums instaed of short-circuiting:
+
 ```gdscript
 func count_solutions(mask: int) -> int:
     if count_bits(mask) == 1:
@@ -146,21 +148,46 @@ func count_solutions(mask: int) -> int:
     return total
 ```
 
+This is textbook dynamic programming: `count_solutions(mask)` only depends on `count_solutions` of masks with strictly fewer pegs, so memoizing by the state torns an exponential enumeration into "compute each reachable state's answer once." It's the counting-problem sibling of the decision problem `solve_from` answers, same recursive structure, different aggregation at each node (sum of children vs. the first non-null child).
+
 ### Unlock thresholds as a UX/performance tradeoff
 
+`Hint` and `Count Solutions` are gated behind `SOLVER_PEG_THRESHOLD`, they only activate once the board has few enough pegs remaining. This isn't a gameplay restriction so much as an honest admission: both features call `solve_from` (or its counting cousin) synchronously, on the main thread, with no cutoff, so their cost is fully exposed to the player as a UI freeze. Capping them to low-peg positions keeps that cost bounded to something a laptop resolves in well under a second. `Solve` uses a different gate entirely, see "Why solve is retricted to the English board above, but on the board where it is allowed to run, it can still take a moment at full peg count, which is why it renders a "this may take a moment" frame first via `await get_tree().process_frame` before the freeze.
+
 ### Jump animation
+
+Purely cosmetic, but still math! the moving peg's screen position is a linear interpolation between the source and destination pixel coordinates, driven by a `Tween`:
 
 ```
 position(t) = from · (1 − t) + to · t, t ∈ [0, 1]
 ```
 
+The jumped over peg fades out using the same `t` as its alpha channel: `alpha(t) = 1 - t`. Godot's `Tween.tween_method` drives `t` from 0 to 1 over `JUMP_DURATION` seconds, calling back into `_draw()` on every step via `queue_redraw()`.
+
 ### The pagoda function
+
+`Pagoda Solver` runs a proof, not a search, it's `O(pegs)`, no recursion, no cache. The weighting used is centered on the win target (the center cell) rather than absolute coordinates:
+
 
 ```
 w(r, c) = φ^(-|r − target_r|) · φ^(-|c − target_c|),    φ = (1 + √5) / 2
 ```
 
+Because a jump only ever changes one coordinate at a time, checking the pagoda inequality reduces to a 1D identity along whichever axis moved. Powers of `φ⁻¹` satisfy `x^2 + x = 1` by definition of the golden ratio, which is exactly the recurrence `g(d) = g(d+1) + g(d+2)` for `g(d) = φ⁻ᵈ`, so summing the weights of the jumping peg and the peg it lands beside reproduces, term for term, the weight of wherever it's heading. That identity is what makes the inequalityhold with equality for moves heading toward the target, and with slack for every other move, which is exactly the property a pagoda function needs.
+
+The total board weight is the sum of `w(r, c)` over every occupied cell. A finished game, one peg sitting exactly in the center, has weight exactly `1.0`. Since total weight never increases under any legal move, if the current total weight is already below `1.0` no sequence of legal moves can ever reach the target, full stop, no search required. This is genuinely a proof, not a heuristic: it can only say "impossible" when it's certain, and it stays silent (not confirmed-possible) otherwise, because the converse doesn't hold, a weight of `1.0` or higher doesn't guarantee a path exists, it only fails to rule one out.
+
 ### Winning strategy
+
+None of this replace knowing how to play, so a few practical heuristics:
+
+ - Preserve triples! A peg with two immediate same-line neighbors (one to jump, one already vacated behind it, or vice versa) is flexible, it can absord or generate a jump without stranding anything. Isolated pegs are dead weight since there's no adjacent peg left to jump.
+ - Work from edges inward, not the reverse. The board's corner have fewest neighbours, so pegs stranded there run out of legal moves earliest.
+ - Avoid single peg gaps between clusters. A lone peg bridging two otherwise-connected group, once removed, can permanently split the board into disconnected regions.
+ - Symmetry cuts your analysis in half (or into eighths). The English cross has 4-fold rotational and reflective symmetry (8 total symmetries) around the center. Any solution has 7 equivalent mirror/rotation twins
+
+
+The center-to-center puzzle (start with the center hole empty, finish with one peg there) is the canonical challenge on the English board, and it's a solved problem in the strict sense, not merely "solvable in principle" but explicitly worked out, with known shortest solutions and a full accounting of which other single-peg endpoints are reachable from which starting holes, via pagoda-function arguments in the spirit of the one implemented above.
 
 ### References
 
